@@ -130,9 +130,3 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
-
-# Project specific
-uploads/
-ml_models/models/
-*.pkl
-*.joblib
