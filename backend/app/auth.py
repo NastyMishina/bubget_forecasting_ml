@@ -9,9 +9,15 @@ from app.database import get_db
 from fastapi import Depends, HTTPException, status
 from app.schemas import UserLogin, UserRegister, TokenResponse, UserCreate, UserSchema
 from app.models import User
+from app.config import get_settings
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
+# Получить настройки
+settings = get_settings()
+
+# Настройки безопасности
+SECRET_KEY = settings.secret_key
+ALGORITHM = settings.algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
 
 # OAuth2 схема - берет токен из заголовка "Authorization: Bearer <token>"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
