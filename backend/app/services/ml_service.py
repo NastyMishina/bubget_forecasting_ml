@@ -155,7 +155,6 @@ class MLService:
             X = features_df.drop(columns=['period'], errors='ignore').values
             
             predictions = model.predict(X)
-            predictions = np.clip(predictions, 25.035, None)
 
             logger.info(f"predict: получено {len(predictions)} прогнозов")
             logger.debug(f"Примеры: {predictions[:5]}")

@@ -1,5 +1,6 @@
 import logging
 import os
+import numpy as np
 import pandas as pd
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -10,21 +11,15 @@ from app.repositories import RawDataUploadRepository
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_DEFAULT_LAGS = [1, 2, 4]
-_DEFAULT_WINDOWS = [2, 4]
-
 
 class DataProcessingService:
     """
-    Обработкв данных:
-
+    Обработка данных и создание признаков для ML моделей
     """
 
     def __init__(self, db: Session):
         self.db = db
         self._raw_data_repo = RawDataUploadRepository(db)
-    
-
     
     def save_raw_data_from_csv(
         self,
@@ -129,7 +124,6 @@ class DataProcessingService:
             logger.error(f"_check_duplicate error: {str(e)}")
             return False
     
-    
     def load_from_db(self, upload_id: int) -> pd.DataFrame:
         """
         Загрузить raw данные из raw_data_uploads
@@ -164,7 +158,6 @@ class DataProcessingService:
     def pivot_to_wide(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Преобразовать из длинного в широкий формат для создания признаков
-        
         """
         try:
             if df.empty:
@@ -186,86 +179,188 @@ class DataProcessingService:
         except Exception as e:
             logger.error(f"pivot_to_wide error: {str(e)}")
             raise
-    
-    def add_lags(self, df: pd.DataFrame, columns: list = None, lags: list = None) -> pd.DataFrame:
-        """Добавить лаговые признаки"""
-        if lags is None:
-            lags = _DEFAULT_LAGS
-        
-        if df.empty:
-            return df.copy()
-        
-        result = df.copy()
-        
-        if columns is None:
-            numeric_cols = df.select_dtypes(include='number').columns.tolist()
-            numeric_cols = [c for c in numeric_cols if c != 'period']
-            columns = numeric_cols
-        
-        for col in columns:
-            if col not in result.columns:
-                continue
-            
-            for lag in lags:
-                result[f"{col}_lag{lag}"] = result[col].shift(lag)
-        
-        logger.info(f"add_lags: добавлено {len(columns) * len(lags)} лаговых признаков")
-        return result
-    
-    def add_rolling(self, df: pd.DataFrame, columns: list = None, windows: list = None) -> pd.DataFrame:
-        """Добавить скользящие средние"""
-        if windows is None:
-            windows = _DEFAULT_WINDOWS
-        
-        if df.empty:
-            return df.copy()
-        
-        result = df.copy()
-        
-        if columns is None:
-            numeric_cols = df.select_dtypes(include='number').columns.tolist()
-            numeric_cols = [c for c in numeric_cols if '_lag' not in c and c != 'period']
-            columns = numeric_cols
-        
-        for col in columns:
-            if col not in result.columns:
-                continue
-            
-            for w in windows:
-                result[f"{col}_roll{w}"] = result[col].rolling(w, min_periods=1).mean()
-        
-        logger.info(f"add_rolling: добавлено {len(columns) * len(windows)} rolling признаков")
-        return result
-    
-    def add_diff(self, df: pd.DataFrame, columns: list = None, diffs: list = None) -> pd.DataFrame:
-        """Добавить разницу между периодами"""
-        if diffs is None:
-            diffs = [1]
-        
-        if df.empty:
-            return df.copy()
-        
-        result = df.copy()
-        
-        if columns is None:
-            numeric_cols = df.select_dtypes(include='number').columns.tolist()
-            numeric_cols = [c for c in numeric_cols if '_lag' not in c and c != 'period']
-            columns = numeric_cols
-        
-        for col in columns:
-            if col not in result.columns:
-                continue
-            
-            for d in diffs:
-                result[f"{col}_diff{d}"] = result[col].diff(d)
-        
-        logger.info(f"add_diff: добавлено {len(columns) * len(diffs)} diff признаков")
-        return result
-    
-    def build_features(self, upload_id: int) -> pd.DataFrame:
+
+    def _add_lag_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Создание признаков
+        Добавить лаговые признаки для выбранных колонок с лагами 1 и 4
         
+        Обрабатывает:
+        - consolidated_revenue, revenue_metals, fx, receivables, inventories (лаги 1, 4)
+        - comercil_expenses (лаги 1, 4)
+        """
+        result = df.copy()
+        
+        lag_features = [
+            "consolidated_revenue",
+            "revenue_metals",
+            "fx",
+            "receivables",
+            "inventories"
+        ]
+        
+        for col in lag_features:
+            if col in result.columns:
+                result[f"{col}_lag_1"] = result[col].shift(1)
+                result[f"{col}_lag_4"] = result[col].shift(4)
+                logger.debug(f"_add_lag_features: добавлены лаги для {col}")
+        
+        if "comercil_expenses" in result.columns:
+            result["commercial_expenses_lag_4"] = result["comercil_expenses"].shift(4)
+            logger.debug(f"_add_lag_features: добавлены лаги для comercil_expenses")
+        
+        return result
+
+    def _add_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Добавить временные признаки (квартал, год)
+        """
+        result = df.copy()
+        
+        if "period" in result.columns:
+            result["quarter"] = result["period"].dt.quarter
+            result["year"] = result["period"].dt.year
+            logger.debug(f"_add_temporal_features: добавлены quarter и year")
+        
+        return result
+
+    def _add_rolling_stats(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Добавить скользящие статистики для comercil_expenses
+        
+        Вычисляет скользящее среднее и стандартное отклонение
+        после сдвига на 1 период (lag=1)
+        """
+        result = df.copy()
+        
+        if "comercil_expenses" in result.columns:
+            shifted = result["comercil_expenses"].shift(1)
+            result["rolling_mean_4"] = shifted.rolling(window=4).mean()
+            result["rolling_std_4"] = shifted.rolling(window=4).std()
+            logger.debug(f"_add_rolling_stats: добавлены rolling mean и std для comercil_expenses")
+        
+        return result
+
+    def _add_yoy_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Добавить Year-over-Year (YoY) признаки
+        
+        YoY = lag_1 / lag_4 (текущий квартал относительно аналога год назад)
+        """
+        result = df.copy()
+        
+        # Revenue YoY
+        if "revenue_metals_lag_1" in result.columns and "revenue_metals_lag_4" in result.columns:
+            result["revenue_yoy"] = result["revenue_metals_lag_1"] / result["revenue_metals_lag_4"]
+            logger.debug(f"_add_yoy_features: добавлен revenue_yoy")
+        
+        # FX YoY
+        if "fx_lag_1" in result.columns and "fx_lag_4" in result.columns:
+            result["fx_yoy"] = result["fx_lag_1"] / result["fx_lag_4"]
+            logger.debug(f"_add_yoy_features: добавлен fx_yoy")
+        
+        return result
+
+    def _add_log_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Добавить логарифмические признаки
+        
+        Логарифмы от: revenue_metals_lag_1, fx_lag_1
+        """
+        result = df.copy()
+        
+        if "revenue_metals_lag_1" in result.columns:
+            result["log_revenue"] = np.log(result["revenue_metals_lag_1"])
+            logger.debug(f"_add_log_features: добавлен log_revenue")
+        
+        if "fx_lag_1" in result.columns:
+            result["log_fx"] = np.log(result["fx_lag_1"])
+            logger.debug(f"_add_log_features: добавлен log_fx")
+        
+        return result
+
+    def _add_growth_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Добавить признаки роста и изменений
+        
+        - growth_log_revenue: дифференциация log_revenue
+        - growth_fx: отношение текущего к предыдущему периоду (темп роста)
+        """
+        result = df.copy()
+        
+        if "log_revenue" in result.columns:
+            result["growth_log_revenue"] = result["log_revenue"].diff()
+            logger.debug(f"_add_growth_features: добавлен growth_log_revenue")
+        
+        if "fx_lag_1" in result.columns:
+            result["growth_fx"] = result["fx_lag_1"] / result["fx_lag_1"].shift(1)
+            logger.debug(f"_add_growth_features: добавлен growth_fx")
+        
+        return result
+
+    def _clean_infinite_values(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Заменить бесконечные значения на NaN
+        
+        Возникают при делении на ноль или логарифме отрицательных чисел
+        """
+        result = df.copy()
+        result.replace([np.inf, -np.inf], np.nan, inplace=True)
+        logger.debug(f"_clean_infinite_values: заменены бесконечные значения")
+        return result
+    
+    def _add_forecast_row(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Добавить строку для прогноза
+        
+        Создает новую строку, используя последние доступные значения
+        для создания лагов.
+        
+        Args:
+            df: DataFrame в широком формате с историческими данными
+        
+        Returns:
+            DataFrame с добавленной строкой для прогноза
+        """
+        try:
+            if df.empty:
+                logger.warning("_add_forecast_row: DataFrame пуст, добавление пропущено")
+                return df
+            
+            df["period"] = pd.to_datetime(df["period"], dayfirst=True)
+
+            last_period = df["period"].max()
+
+            next_period = last_period + pd.offsets.QuarterEnd()
+            
+            forecast_row = pd.DataFrame({
+                col: [0] if col != 'period' else next_period
+                for col in df.columns
+            })
+            
+            result = pd.concat([df, forecast_row], ignore_index=True)
+            
+            logger.info(f"_add_forecast_row: добавлена строка для 31.03.2024, новый shape={result.shape}")
+            return result
+        
+        except Exception as e:
+            logger.error(f"_add_forecast_row error: {str(e)}")
+            raise
+
+    def build_features(self, upload_id: int, include_forecast: bool = True) -> pd.DataFrame:
+        """
+        Создание признаков для ML моделей
+        
+        Этапы:
+        1. Загрузить raw данные
+        2. Преобразовать в широкий формат и добавить строку для реального предсказания
+        3. Добавить лаговые признаки
+        4. Добавить временные признаки
+        5. Добавить скользящие статистики
+        6. Добавить YoY признаки
+        7. Добавить логарифмические признаки
+        8. Добавить признаки роста
+        9. Очистить бесконечные значения
+        10. Удалить строки с пропусками
         
         Returns:
             DataFrame с признаками, готовыми для ML модели
@@ -273,28 +368,49 @@ class DataProcessingService:
         try:
             logger.info(f"build_features: начало для upload_id={upload_id}")
             
-        
+            # 1. Загрузить raw данные
             raw = self.load_from_db(upload_id)
             
             if raw.empty:
                 logger.warning(f"build_features: нет данных для upload_id={upload_id}")
                 return raw
             
-     
-            pivoted = self.pivot_to_wide(raw)
+            # 2. Преобразовать в широкий формат
+            df = self.pivot_to_wide(raw)
+            logger.debug(f"build_features: после pivot shape={df.shape}")
+
+            if include_forecast:
+                df = self._add_forecast_row(df)
+                logger.debug(f"build_features: после добавления прогноза shape={df.shape}")
             
-          
-            indicator_cols = [c for c in pivoted.columns if c != 'period' and c != 'indicator']
+            # 3. Добавить лаговые признаки
+            df = self._add_lag_features(df)
+            logger.debug(f"build_features: после лагов shape={df.shape}")
             
-    
-            with_lags = self.add_lags(pivoted, columns=indicator_cols)
-            with_rolling = self.add_rolling(with_lags, columns=indicator_cols)
-            with_diff = self.add_diff(with_rolling, columns=indicator_cols)
+            # 4. Добавить временные признаки
+            df = self._add_temporal_features(df)
             
-            logger.debug(f"build_features: ДО dropna shape={with_diff.shape}")
+            # 5. Добавить скользящие статистики
+            df = self._add_rolling_stats(df)
+            logger.debug(f"build_features: после rolling shape={df.shape}")
             
-            threshold = int(len(with_diff.columns) * 0.8)  
-            final_df = with_diff.dropna(thresh=threshold).reset_index(drop=True)
+            # 6. Добавить YoY признаки
+            df = self._add_yoy_features(df)
+            
+            # 7. Добавить логарифмические признаки
+            df = self._add_log_features(df)
+            
+            # 8. Добавить признаки роста
+            df = self._add_growth_features(df)
+            logger.debug(f"build_features: после growth features shape={df.shape}")
+            
+            # 9. Очистить бесконечные значения
+            df = self._clean_infinite_values(df)
+            
+            # 10. Удалить строки с пропусками
+            logger.debug(f"build_features: ДО dropna shape={df.shape}")
+            final_df = df.dropna().reset_index(drop=True)
+            
             
             logger.info(f"build_features: итоговый датасет {len(final_df)} строк × {len(final_df.columns)} колонок")
             
@@ -358,8 +474,6 @@ class DataProcessingService:
         except Exception as e:
             logger.error(f"create_and_save_features error: {str(e)}")
             raise
-    
- 
     
     def get_upload_stats(self, upload_id: int) -> dict:
         """Получить статистику по загруженным данным"""
