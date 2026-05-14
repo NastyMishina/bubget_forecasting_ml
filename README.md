@@ -44,24 +44,12 @@
 <img width="974" height="468" alt="image" src="https://github.com/user-attachments/assets/9c291d9b-4999-4ffe-85bf-d83c555062b5" />
 
 Для генерации признаков нажмите кнопку "Признаки" напротив необходимого файла. 
-Файл должен быть содержать значения за два прошлогодних периода относительно текущего, т е если необходимо сделать прогноз на 1 квартал 2024 года, в файле необходимо указать данные за период с 1 квартала 2022 по 4 квартал 2023.
-period	    indicator           value
-31.03.2023	comercil_expenses
-31.03.2023	fx
-31.03.2023	inventories
-31.03.2023	consolidated_revenue
-31.03.2023	revenue_products
-31.03.2023	receivables
-...
-31.12.2023	comercil_expenses
-31.12.2023	fx
-31.12.2023	inventories
-31.12.2023	consolidated_revenue
-31.12.2023	revenue_products
-31.12.2023	receivables
-<img width="327" height="145" alt="image" src="https://github.com/user-attachments/assets/3b44ec67-7cdd-4dec-834d-02612f861cf1" />
+Файл должен содержать значения за два прошлогодних периода относительно текущего, т е если необходимо сделать прогноз на 1 квартал 2024 года, в файле необходимо указать данные за период с 1 квартала 2022 по 4 квартал 2023.
 
-<img width="327" height="601" alt="image" src="https://github.com/user-attachments/assets/4c9298e8-bbb8-4abc-9061-c03917d48c86" />
+<img width="518" height="169" alt="image" src="https://github.com/user-attachments/assets/a66fe6c2-27cb-45f3-b25b-42b64703a4a3" />
+
+
+<img width="518" height="145" alt="image" src="https://github.com/user-attachments/assets/77071f93-84f4-422a-bd2f-d3ac8cc98fd5" />
 
 
 4. При необходимсоти выделите файл для удаления и нажмите "Удалить выбранное"
